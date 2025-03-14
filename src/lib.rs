@@ -65,11 +65,12 @@ impl PrivateCode {
     pub fn from_seed(
         seed: &[u8],
         network: bitcoin::Network,
-        derivation_path: DerivationPath,
+        derivation_path: &str,
     ) -> Result<Self, bip32::Error> {
         let curve = Secp256k1::new();
         let root_key = bip32::ExtendedPrivKey::new_master(network, seed)?;
-        let identity_key = root_key.derive_priv(&curve, &derivation_path)?;
+        let path = DerivationPath::from_str(derivation_path)?;
+        let identity_key = root_key.derive_priv(&curve, &path)?;
 
         Ok(Self {
             identity_key,
@@ -732,9 +733,7 @@ mod tests {
     000000000000536a4c50010002063e4eb95e62791b06c50e1a3a942e1ecaaa9afbbeb324d16ae6821e091611fa96c0c\
     f048f607fe51a0327f5e2528979311c78cb2de0d682c61e1180fc3d543b0000000000000000000000000000000000";
 
-    fn get_derivation_path() -> DerivationPath {
-        DerivationPath::from_str("m/47'/0'/0'").unwrap()
-    }
+    const DERIVATION_PATH: &str = "m/47'/0'/0'";
 
     fn from_hex(hex: &str) -> Vec<u8> {
         HexIterator::new(hex)
@@ -754,8 +753,7 @@ mod tests {
     #[test]
     fn test_payment_code_from_seed() {
         let seed: Vec<u8> = hashes::hex::FromHex::from_hex(ALICE_BIP32_SEED).unwrap();
-        let private =
-            PrivateCode::from_seed(&seed, Network::Bitcoin, get_derivation_path()).unwrap();
+        let private = PrivateCode::from_seed(&seed, Network::Bitcoin, DERIVATION_PATH).unwrap();
         let public = private.v1_public_code(None);
 
         assert_eq!(public.to_string(), ALICE_PAYMENT_CODE);
@@ -801,7 +799,7 @@ mod tests {
         // Alice
         let alice_seed: Vec<u8> = hashes::hex::FromHex::from_hex(ALICE_BIP32_SEED).unwrap();
         let alice_private =
-            PrivateCode::from_seed(&alice_seed, Network::Bitcoin, get_derivation_path()).unwrap();
+            PrivateCode::from_seed(&alice_seed, Network::Bitcoin, DERIVATION_PATH).unwrap();
 
         let alice_a0 = alice_private.child(0).unwrap();
         let alice_A0 = PublicKey::from_private_key(&Secp256k1::new(), &alice_a0);
@@ -811,7 +809,7 @@ mod tests {
         // Bob
         let bob_seed: Vec<u8> = hashes::hex::FromHex::from_hex(BOB_BIP32_SEED).unwrap();
         let bob_private =
-            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, get_derivation_path()).unwrap();
+            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, DERIVATION_PATH).unwrap();
 
         let bob_b0 = bob_private.child(0).unwrap();
         let bob_b1 = bob_private.child(1).unwrap();
@@ -873,7 +871,7 @@ mod tests {
         let alice_seed: Vec<u8> =
             bitcoin::hashes::hex::FromHex::from_hex(ALICE_BIP32_SEED).unwrap();
         let alice_private =
-            PrivateCode::from_seed(&alice_seed, Network::Bitcoin, get_derivation_path()).unwrap();
+            PrivateCode::from_seed(&alice_seed, Network::Bitcoin, DERIVATION_PATH).unwrap();
 
         let bob_public = PublicCode::from_wif(BOB_PAYMENT_CODE).unwrap();
 
@@ -892,7 +890,7 @@ mod tests {
 
         let bob_seed: Vec<u8> = bitcoin::hashes::hex::FromHex::from_hex(BOB_BIP32_SEED).unwrap();
         let bob_private =
-            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, get_derivation_path()).unwrap();
+            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, DERIVATION_PATH).unwrap();
 
         let addr_0 = bob_private.address(&alice_public, 0, false).unwrap();
         let addr_1 = bob_private.address(&alice_public, 1, false).unwrap();
@@ -1003,7 +1001,7 @@ mod tests {
 
         let bob_seed: Vec<u8> = bitcoin::hashes::hex::FromHex::from_hex(BOB_BIP32_SEED).unwrap();
         let bob_private =
-            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, get_derivation_path()).unwrap();
+            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, DERIVATION_PATH).unwrap();
 
         let alice_public = PublicCode::from_notification(&bob_private, None, &tx).unwrap();
         assert_eq!(
