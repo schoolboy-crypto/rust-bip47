@@ -10,35 +10,6 @@
 // You should have received a copy of the CC0 Public Domain Dedication
 // along with this software.
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
-
-//! # Rust BIP47 Library
-//!
-//! This library implements the BIP47 standard and provides functionality
-//! for generating static payment codes that two parties can use to create
-//! a private payment address space between them.
-//!
-//! Original specification: [BIP-0047](https://github.com/bitcoin/bips/blob/master/bip-0047.mediawiki).
-//!
-//! ## Usage
-//! ```
-//! # extern crate bitcoin;
-//! # extern crate bip47;
-//! # use {bip47::PrivateCode, bip47::PublicCode, bitcoin::Network};
-//! # let alice_seed = [0_u8];
-//! // Alice constructs her own payment code using a BIP32 seed
-//! let alice_private = PrivateCode::from_seed(&alice_seed, 0, Network::Bitcoin).unwrap();
-//!
-//! // Alice parses Bob's payment code
-//! let bob_public = PublicCode::from_wif("PM8TJS2JxQ5ztXUpBBRnpTbcUXbUHy2T1abfrb3KkAAtMEGNbey4oumH7Hc578WgQJhPjBxteQ5GHHToTYHE3A1w6p7tU6KSoFmWBVbFGjKPisZDbP97").unwrap();
-//!
-//! // Alice calculates Bob's receive address at index 0, known only to them
-//! let bob_address_0 = bob_public.address(&alice_private, 0, false).unwrap();
-//!
-//! // Alice can now pay Bob privately
-//! assert_eq!("12edoJAofkjCsWrtmVjuQgMUKJ6Z7Ntpzx", bob_address_0.to_string());
-//!
-//! ```
-
 use std::str::FromStr;
 
 pub extern crate bitcoin;
@@ -93,13 +64,12 @@ impl PrivateCode {
     /// Constructs a new payment code from the private side using a BIP32 seed.
     pub fn from_seed(
         seed: &[u8],
-        account: u32,
         network: bitcoin::Network,
+        derivation_path: DerivationPath,
     ) -> Result<Self, bip32::Error> {
         let curve = Secp256k1::new();
-        let path = DerivationPath::from_str(&format!("m/47'/0'/{}'", account))?;
         let root_key = bip32::ExtendedPrivKey::new_master(network, seed)?;
-        let identity_key = root_key.derive_priv(&curve, &path)?;
+        let identity_key = root_key.derive_priv(&curve, &derivation_path)?;
 
         Ok(Self {
             identity_key,
@@ -120,7 +90,6 @@ impl PrivateCode {
             DerivationPath::from_str(&format!("m/47'/0'/{}'/{}'", account, ephemeral_index))?;
         let root_key = bip32::ExtendedPrivKey::new_master(network, seed)?;
         let identity_key = root_key.derive_priv(&curve, &path)?;
-
         Ok(Self {
             identity_key,
             curve,
@@ -397,7 +366,7 @@ pub enum NotificationMode<'a> {
 /// an on-chain notification message.
 pub struct BasicTransaction<'a>(&'a PublicCode);
 
-impl<'a> BasicTransaction<'a> {
+impl BasicTransaction<'_> {
     /// Derives the notification pubkey belonging to this payment code. This is exposed in case the
     /// consumer needs the notification pubkey for any reason, such as for manual blinding operations.
     /// Under normal circumstances, it is sufficient to use `notification_address`.
@@ -447,7 +416,7 @@ pub struct Bitmessage<'a> {
     preferences: &'a BitMessagePreference,
 }
 
-impl<'a> Bitmessage<'a> {
+impl Bitmessage<'_> {
     /// Makes the required parameters needed to send a bitmessage to a recipient.
     pub fn make_send_params(&self, n: u32) -> Result<BitMessageSendParams, Error> {
         let signing_key = self
@@ -477,7 +446,7 @@ impl<'a> Bitmessage<'a> {
 /// constructing an on-chain notification message.
 pub struct BloomMultisig<'a>(&'a PublicCode);
 
-impl<'a> BloomMultisig<'a> {
+impl BloomMultisig<'_> {
     /// Generates a bloom filter identifier to watch for. This is what the receiving party
     /// should add to their bloom filter in order to notice bloom filter type notifications.
     pub fn identifier(&self) -> Vec<u8> {
@@ -707,6 +676,7 @@ mod tests {
 
     use bitcoin::hashes::{self, hex::HexIterator};
     use bitcoin::secp256k1::Secp256k1;
+    use bitcoin::util::bip32::DerivationPath;
     use bitcoin::util::psbt::serialize::Deserialize;
     use bitcoin::{Address, Network, PrivateKey, PublicKey};
 
@@ -762,6 +732,10 @@ mod tests {
     000000000000536a4c50010002063e4eb95e62791b06c50e1a3a942e1ecaaa9afbbeb324d16ae6821e091611fa96c0c\
     f048f607fe51a0327f5e2528979311c78cb2de0d682c61e1180fc3d543b0000000000000000000000000000000000";
 
+    fn get_derivation_path() -> DerivationPath {
+        DerivationPath::from_str("m/47'/0'/0'").unwrap()
+    }
+
     fn from_hex(hex: &str) -> Vec<u8> {
         HexIterator::new(hex)
             .unwrap()
@@ -780,7 +754,8 @@ mod tests {
     #[test]
     fn test_payment_code_from_seed() {
         let seed: Vec<u8> = hashes::hex::FromHex::from_hex(ALICE_BIP32_SEED).unwrap();
-        let private = PrivateCode::from_seed(&seed, 0, Network::Bitcoin).unwrap();
+        let private =
+            PrivateCode::from_seed(&seed, Network::Bitcoin, get_derivation_path()).unwrap();
         let public = private.v1_public_code(None);
 
         assert_eq!(public.to_string(), ALICE_PAYMENT_CODE);
@@ -825,7 +800,8 @@ mod tests {
     fn test_ecdh_params() {
         // Alice
         let alice_seed: Vec<u8> = hashes::hex::FromHex::from_hex(ALICE_BIP32_SEED).unwrap();
-        let alice_private = PrivateCode::from_seed(&alice_seed, 0, Network::Bitcoin).unwrap();
+        let alice_private =
+            PrivateCode::from_seed(&alice_seed, Network::Bitcoin, get_derivation_path()).unwrap();
 
         let alice_a0 = alice_private.child(0).unwrap();
         let alice_A0 = PublicKey::from_private_key(&Secp256k1::new(), &alice_a0);
@@ -834,7 +810,8 @@ mod tests {
 
         // Bob
         let bob_seed: Vec<u8> = hashes::hex::FromHex::from_hex(BOB_BIP32_SEED).unwrap();
-        let bob_private = PrivateCode::from_seed(&bob_seed, 0, Network::Bitcoin).unwrap();
+        let bob_private =
+            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, get_derivation_path()).unwrap();
 
         let bob_b0 = bob_private.child(0).unwrap();
         let bob_b1 = bob_private.child(1).unwrap();
@@ -861,10 +838,10 @@ mod tests {
 
     #[test]
     fn test_secret_point_alice_side() {
-        let sk = PrivateKey::from_slice(&from_hex(&ALICE_a0), bitcoin::Network::Bitcoin).unwrap();
-        let pk0 = PublicKey::from_slice(&from_hex(&BOB_B0)).unwrap();
-        let pk1 = PublicKey::from_slice(&from_hex(&BOB_B1)).unwrap();
-        let pk2 = PublicKey::from_slice(&from_hex(&BOB_B2)).unwrap();
+        let sk = PrivateKey::from_slice(&from_hex(ALICE_a0), bitcoin::Network::Bitcoin).unwrap();
+        let pk0 = PublicKey::from_slice(&from_hex(BOB_B0)).unwrap();
+        let pk1 = PublicKey::from_slice(&from_hex(BOB_B1)).unwrap();
+        let pk2 = PublicKey::from_slice(&from_hex(BOB_B2)).unwrap();
 
         let sp0 = secret_point(&sk, pk0).unwrap();
         let sp1 = secret_point(&sk, pk1).unwrap();
@@ -877,10 +854,10 @@ mod tests {
 
     #[test]
     fn test_secret_point_bob_side() {
-        let pk = PublicKey::from_slice(&from_hex(&ALICE_A0)).unwrap();
-        let sk0 = PrivateKey::from_slice(&from_hex(&BOB_b0), bitcoin::Network::Bitcoin).unwrap();
-        let sk1 = PrivateKey::from_slice(&from_hex(&BOB_b1), bitcoin::Network::Bitcoin).unwrap();
-        let sk2 = PrivateKey::from_slice(&from_hex(&BOB_b2), bitcoin::Network::Bitcoin).unwrap();
+        let pk = PublicKey::from_slice(&from_hex(ALICE_A0)).unwrap();
+        let sk0 = PrivateKey::from_slice(&from_hex(BOB_b0), bitcoin::Network::Bitcoin).unwrap();
+        let sk1 = PrivateKey::from_slice(&from_hex(BOB_b1), bitcoin::Network::Bitcoin).unwrap();
+        let sk2 = PrivateKey::from_slice(&from_hex(BOB_b2), bitcoin::Network::Bitcoin).unwrap();
 
         let sp0 = secret_point(&sk0, pk).unwrap();
         let sp1 = secret_point(&sk1, pk).unwrap();
@@ -895,7 +872,8 @@ mod tests {
     fn test_payment_address_alice_side() {
         let alice_seed: Vec<u8> =
             bitcoin::hashes::hex::FromHex::from_hex(ALICE_BIP32_SEED).unwrap();
-        let alice_private = PrivateCode::from_seed(&alice_seed, 0, Network::Bitcoin).unwrap();
+        let alice_private =
+            PrivateCode::from_seed(&alice_seed, Network::Bitcoin, get_derivation_path()).unwrap();
 
         let bob_public = PublicCode::from_wif(BOB_PAYMENT_CODE).unwrap();
 
@@ -913,7 +891,8 @@ mod tests {
         let alice_public = PublicCode::from_wif(ALICE_PAYMENT_CODE).unwrap();
 
         let bob_seed: Vec<u8> = bitcoin::hashes::hex::FromHex::from_hex(BOB_BIP32_SEED).unwrap();
-        let bob_private = PrivateCode::from_seed(&bob_seed, 0, Network::Bitcoin).unwrap();
+        let bob_private =
+            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, get_derivation_path()).unwrap();
 
         let addr_0 = bob_private.address(&alice_public, 0, false).unwrap();
         let addr_1 = bob_private.address(&alice_public, 1, false).unwrap();
@@ -928,7 +907,7 @@ mod tests {
     fn test_blinding() {
         let bob_public = PublicCode::from_wif(BOB_PAYMENT_CODE).unwrap();
 
-        let alice_designated_sk = PrivateKey::from_wif(&ALICE_DESIGNATED_PRIVATE_KEY).unwrap();
+        let alice_designated_sk = PrivateKey::from_wif(ALICE_DESIGNATED_PRIVATE_KEY).unwrap();
         let pk = bob_public.child(0).unwrap();
         let utxo = bitcoin::OutPoint::from_str(ALICE_NOTIFICATION_UTXO).unwrap();
 
@@ -1023,7 +1002,8 @@ mod tests {
         let tx = bitcoin::Transaction::deserialize(&from_hex(NOTIFICATION_TX)).unwrap();
 
         let bob_seed: Vec<u8> = bitcoin::hashes::hex::FromHex::from_hex(BOB_BIP32_SEED).unwrap();
-        let bob_private = PrivateCode::from_seed(&bob_seed, 0, Network::Bitcoin).unwrap();
+        let bob_private =
+            PrivateCode::from_seed(&bob_seed, Network::Bitcoin, get_derivation_path()).unwrap();
 
         let alice_public = PublicCode::from_notification(&bob_private, None, &tx).unwrap();
         assert_eq!(
